@@ -5,12 +5,16 @@
 #include "mmu.h"
 #include "x86.h"
 #include "proc.h"
+#include "pstat.h"
+#include "rand.h"
 #include "spinlock.h"
 
-struct {
+struct processTable{
   struct spinlock lock;
   struct proc proc[NPROC];
-} ptable;
+};
+
+struct processTable ptable;
 
 static struct proc *initproc;
 
@@ -88,6 +92,8 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->tickets = 1;
+  p->ticks = 0;
 
   release(&ptable.lock);
 
@@ -189,6 +195,8 @@ fork(void)
     return -1;
   }
 
+  np->tickets = curproc->tickets; // Forked process has the same number of tickets as the parent process
+
   // Copy process state from proc.
   if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
     kfree(np->kstack);
@@ -262,6 +270,7 @@ exit(void)
   }
 
   // Jump into the scheduler, never to return.
+  curproc->tickets = 0;
   curproc->state = ZOMBIE;
   sched();
   panic("zombie exit");
@@ -291,6 +300,8 @@ wait(void)
         p->kstack = 0;
         freevm(p->pgdir);
         p->pid = 0;
+        p->tickets = 0;
+        p->ticks = 0;
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
@@ -325,33 +336,54 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+  const int seed = 1323;
+  srand(seed);
+    
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
+    int totalTickets = 0;
+    // Loop over process table to calculate the total number of tickets of
+    // RUNNABLE processes
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if (p->state == RUNNABLE) {
+        totalTickets += p->tickets;
+      }
+    }
+
+    const int winningTicket =	rand()%(totalTickets + 1);
+    int ticketsPassed = 0;
+ 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
+	    if(p->state == RUNNABLE) {
+        ticketsPassed += p->tickets;
+      }
+      if(ticketsPassed < winningTicket) {
         continue;
-
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+	    } 
+        
+	    // Switch to chosen process.  It is the process's job
+	    // to release ptable.lock and then reacquire it
+	    // before jumping back to us.
       c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+	    switchuvm(p);
+	    p->state = RUNNING;
+      const int tickstart = ticks;        
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
+	    swtch(&(c->scheduler), p->context);  
+      p->ticks += ticks - tickstart;
+	    switchkvm();
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
+	    // Process is done running for now.
+	    // It should have changed its p->state before coming back.
+      c->proc = 0;        
+      break;
     }
     release(&ptable.lock);
-
+  
   }
 }
 

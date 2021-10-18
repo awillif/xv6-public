@@ -6,6 +6,14 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "proc.h"
+#include "pstat.h"
+#include "spinlock.h"
+
+struct processTable {
+    struct spinlock lock;
+    struct proc proc[NPROC];
+};
+extern struct processTable ptable;
 
 int
 sys_fork(void)
@@ -88,4 +96,50 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+int
+sys_settickets(void)
+{
+  int tickets;
+
+  if(argint(0, &tickets) < 0 || tickets < 1)
+    return -1;
+  
+  myproc()->tickets = tickets;
+  return 0;
+}
+
+int
+sys_getpinfo(void)
+{
+  struct proc *p;
+  struct pstat *procInfo;
+
+    // Get the process info pointer from user space in which information will be
+    // stored
+    if (argptr(0, (char **)(&procInfo), sizeof(procInfo)) < 0)
+        return -1;
+
+    // Acquire the process table lock
+    acquire(&ptable.lock);
+    int index = 0;
+
+    // Get the process information and store it
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+        if (p->state == UNUSED) {
+          procInfo->inuse[index] = 0;
+          index++;
+          continue;
+        }
+
+        procInfo->pid[index] = p->pid;
+        procInfo->ticks[index] = p->ticks;
+        procInfo->tickets[index] = p->tickets;
+        procInfo->inuse[index] = 1;
+        index++;
+    }
+    // Release the process table lock
+    release(&ptable.lock);
+    return 0;
 }
