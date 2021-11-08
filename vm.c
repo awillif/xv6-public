@@ -385,6 +385,84 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   return 0;
 }
 
+int
+mprotect(void *addr, int len)
+{
+  struct proc *proc = myproc();
+
+  // Reload CR3 to flush TLB
+  lcr3(V2P(proc->pgdir));  
+
+  // Check for valid address space
+  if (len <= 0 || (int)addr + len*PGSIZE > proc->sz) {
+    cprintf("\nBad len: %d\n", len);
+    return -1;
+  }
+  // Check page alignment
+  int isAligned = (int)(((int) addr) % PGSIZE );
+  if( isAligned != 0){
+    cprintf("\nBad address: %p\n", addr);
+    return -1;
+  }
+
+  // Loop through all pages within given length and clear write bits
+  pte_t *pte;
+  int i;
+  for (i = (int) addr; i < ((int) addr + len*PGSIZE); i += PGSIZE){
+    // Get virtual address i's PTE address for the current process's page table
+    pte = walkpgdir(proc->pgdir, (void*)i, 0);
+
+    // Make sure the PTE is accessable by the user and is present
+    if(pte && ((*pte & PTE_U) != 0) && ((*pte & PTE_P) != 0) ){
+      // Clear the PTE write bit
+      *pte &= ~PTE_W;
+    } else {
+      return -1;
+    }
+  }
+
+  return 0;
+}
+
+int
+munprotect(void *addr, int len)
+{
+  struct proc *proc = myproc();
+
+  // Reload CR3 to flush TLB
+  lcr3(V2P(proc->pgdir));  
+
+   // Check for valid address space
+  if (len <= 0 || (int)addr + len*PGSIZE > proc->sz) {
+    cprintf("\nBad len: %d\n", len);
+    return -1;
+  }
+  // Check page alignment
+  int isAligned = (int)(((int) addr) % PGSIZE );
+  if( isAligned != 0){
+    cprintf("\nBad address: %p\n", addr);
+    return -1;
+  }
+
+  // Loop through all pages within given length and clear write bits
+  pte_t *pte;
+  int i;
+  for (i = (int) addr; i < ((int) addr + len*PGSIZE); i += PGSIZE){
+    // Get virtual address i's PTE address for the current process's page table
+    pte = walkpgdir(proc->pgdir, (void*)i, 0);
+
+    // Make sure the PTE is accessable by the user and is present
+    if(pte && ((*pte & PTE_U) != 0) && ((*pte & PTE_P) != 0) ){
+      // Set the PTE write bit
+      *pte |= PTE_W;
+    } else {
+      return -1;
+    }
+  }
+  
+  return 0;
+}
+
 //PAGEBREAK!
 // Blank page.
 //PAGEBREAK!
