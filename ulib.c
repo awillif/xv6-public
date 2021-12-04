@@ -3,6 +3,7 @@
 #include "fcntl.h"
 #include "user.h"
 #include "x86.h"
+#include "mmu.h"
 
 char*
 strcpy(char *s, const char *t)
@@ -104,3 +105,44 @@ memmove(void *vdst, const void *vsrc, int n)
     *dst++ = *src++;
   return vdst;
 }
+
+static inline int fetch_and_add(int *var, int val) {   
+    __asm__ volatile
+    ("lock; xaddl %0, %1"
+	: "+r" (val),  "+m" (*var) // input + output
+	: // No input
+	: "memory"
+    );
+    return val;
+}
+
+int thread_create(void (*start_routine)(void *, void *), void* arg1, void* arg2)
+{
+  void* stack;
+  stack = malloc(PGSIZE);
+
+  return clone(start_routine, arg1, arg2, stack);
+}
+
+int thread_join()
+{
+  void * stackPtr;
+  int x = join(&stackPtr);
+  return x;
+}
+
+int lock_init(lock_t *lock){
+  lock->ticket = 0;
+  lock->turn = 0;
+  return 0;
+}
+
+void lock_acquire(lock_t *lock){
+  int turn = fetch_and_add(&lock->ticket, 1);
+  while(lock->turn != turn) //spin lock
+  { sleep(1); }
+}
+
+void lock_release(lock_t *lock){
+  lock->turn++;
+} 
